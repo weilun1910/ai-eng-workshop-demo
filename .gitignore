@@ -1,0 +1,9 @@
+# Only the demo itself goes to GitHub. The starter files in this folder
+# (START-HERE, REQUIREMENTS, AGENTS, CLAUDE, sensor-test) stay local.
+*
+!.gitignore
+!index.html
+!sensor.js
+!data.js
+!sounds/
+!sounds/*.wav

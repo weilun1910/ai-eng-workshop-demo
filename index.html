@@ -1,0 +1,1011 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rear park assist demo</title>
+<style>
+  :root {
+    --bg: #04070a;
+    --text: #d6ecf5;
+    --dim: rgba(150, 195, 215, 0.5);
+    --rule: rgba(150, 195, 215, 0.14);
+    --cyan: #78dcff;
+    --lost: #b38cff;
+    --sans: "Avenir Next", Avenir, "Segoe UI", system-ui, sans-serif;
+    --data: ui-monospace, "SF Mono", Menlo, Consolas, monospace;   /* raw data rows only */
+  }
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+  }
+  main {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 56px;
+    padding: 0 32px;
+    box-sizing: border-box;
+  }
+  .panel-label {
+    margin: 0 0 12px 2px;
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    color: var(--dim);
+  }
+
+  /* The driver's screen: a tall in-car display. */
+  #device {
+    position: relative;
+    height: calc(100vh - 120px);
+    width: calc((100vh - 120px) * 0.62);
+    max-width: 56vw;
+    border: 1px solid rgba(120, 220, 255, 0.22);
+    border-radius: 24px;
+    overflow: hidden;
+    background: #020406;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  /* In the red zone the screen's border pulses red, a little. Everything
+     stays inside the border: the glow only spreads inward. */
+  #alertGlow {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  #device.alert { animation: alertBorder 1.1s ease-in-out infinite; }
+  #device.alert #alertGlow { opacity: 1; animation: alertInner 1.1s ease-in-out infinite; }
+  @keyframes alertBorder {
+    0%, 100% { border-color: rgba(255, 77, 94, 0.45); }
+    50% { border-color: rgba(255, 77, 94, 0.95); }
+  }
+  @keyframes alertInner {
+    0%, 100% { box-shadow: inset 0 0 14px rgba(255, 77, 94, 0.18); }
+    50% { box-shadow: inset 0 0 34px rgba(255, 77, 94, 0.4); }
+  }
+
+  /* The sensor feed: the raw readings, shown separately for the demo. */
+  .feed {
+    width: min(480px, 36vw);
+    height: calc(100vh - 120px);
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    background: #060a0e;
+    overflow: hidden;
+  }
+  .feed-head {
+    padding: 16px 18px 14px;
+    border-bottom: 1px solid var(--rule);
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--dim);
+  }
+  .feed-head strong { color: var(--text); font-weight: 600; letter-spacing: 0.08em; }
+  .feed-cols, .feed-row {
+    display: grid;
+    grid-template-columns: 7ch 11ch 8ch 13ch 11ch;
+    column-gap: 1.4ch;
+    padding: 0 18px;
+    font-size: 12.5px;
+    white-space: nowrap;
+  }
+  .feed-cols, .feed-row { font-family: var(--data); }
+  .feed-cols { padding-top: 12px; padding-bottom: 8px; color: var(--dim); }
+  #feedRows { flex: 1; overflow: hidden; }
+  .feed-row { line-height: 1.8; color: rgba(214, 236, 245, 0.5); }
+  .feed-row.newest { color: #eefaff; background: rgba(120, 220, 255, 0.08); }
+  .feed-row.missed { color: var(--lost); }
+  .feed-head .tag {
+    margin-left: 10px;
+    padding: 1px 7px;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+  }
+  #feedLatency.slow { color: #ff4d5e; }
+  .feed-foot {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 18px;
+    border-top: 1px solid var(--rule);
+    font-size: 11.5px;
+    letter-spacing: 0.06em;
+    color: var(--dim);
+  }
+  /* Phones and narrow windows: just the driver's screen, as wide as fits. */
+  @media (max-width: 900px) {
+    .feed-panel { display: none; }
+    main { padding: 0 16px; }
+    #device {
+      height: calc(100dvh - 120px);
+      width: min(calc((100dvh - 120px) * 0.62), calc(100vw - 32px));
+      max-width: none;
+    }
+  }
+
+  #startScreen {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 24px;
+    background: rgba(4, 7, 10, 0.94);
+  }
+  #startScreen h1 { margin: 0 0 14px; font-size: 20px; font-weight: 500; letter-spacing: 0.28em; }
+  #startScreen p { margin: 0 auto 36px; max-width: 480px; font-size: 13px; line-height: 1.8; color: var(--dim); }
+  #startButton {
+    font-family: var(--sans);
+    font-size: 14px;
+    letter-spacing: 0.32em;
+    padding: 14px 44px 14px 48px;
+    color: var(--cyan);
+    background: transparent;
+    border: 1px solid var(--cyan);
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  #startButton:hover { background: rgba(120, 220, 255, 0.08); }
+</style>
+</head>
+<body>
+<main>
+  <section>
+    <div class="panel-label">DRIVER'S SCREEN</div>
+    <div id="device"><canvas id="screen"></canvas><div id="alertGlow"></div></div>
+  </section>
+  <section class="feed-panel">
+    <div class="panel-label">SENSOR FEED</div>
+    <div class="feed">
+      <div class="feed-head">
+        <strong>sensor.js -> onReading</strong><span class="tag">SIMULATED FEED</span><br>
+        The raw readings as they arrive.
+      </div>
+      <div class="feed-cols">
+        <span>time_ms</span><span>distance_cm</span><span>echo_us</span><span>warning_level</span><span>servo_angle</span>
+      </div>
+      <div id="feedRows"></div>
+      <div class="feed-foot">
+        <span id="feedStats">WAITING FOR THE FIRST READING</span>
+        <span id="feedLatency">LATENCY -- MS</span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="startScreen">
+  <div>
+    <h1 id="startTitle">REAR PARK ASSIST</h1>
+    <p id="startText">This replays a recorded parking run through sensor.js, as if the car's rear sensor were sending it live. Start turns on the screen and the sound.</p>
+    <button id="startButton">START</button>
+  </div>
+</div>
+
+<audio id="beepSound" src="sounds/beep.wav" preload="auto"></audio>
+<audio id="lostSound" src="sounds/sensor-lost.wav" preload="auto"></audio>
+
+<script src="data.js"></script>
+<script src="sensor.js"></script>
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------
+// Settings. These are the builder's choices from the functional requirements.
+// ---------------------------------------------------------------------------
+const ZONES = { redBelowCm: 30, yellowBelowCm: 100 };   // green from 100 cm up
+const BEEPS_PER_SECOND = { green: 1, yellow: 2, red: 4 };
+const LOST_REPEAT_MS = 700;   // how often the sensor-lost sound repeats
+const STALE_AFTER_MS = 600;   // no reading for this long also counts as sensor lost
+const MAX_RANGE_CM = 260;     // how far behind the car the screen shows
+const PULSE_MS = 110;         // how long a radar pulse takes to reach the wall
+const MAX_DELAY_MS = 100;     // the "virtually instant" limit
+
+const UI = [120, 220, 255];
+const COLOURS = {
+  green: [61, 255, 168],
+  yellow: [255, 194, 74],
+  red: [255, 77, 94],
+  lost: [179, 140, 255],
+  waiting: [120, 150, 170],
+};
+const ZONE_LABEL = { green: "CLEAR", yellow: "SLOW DOWN", red: "STOP" };
+const SANS = '"Avenir Next", Avenir, "Segoe UI", system-ui, sans-serif';
+// DIN-style type, like road signs and car dashboards. Bahnschrift is Windows' version.
+const DIN = '"DIN Alternate", Bahnschrift, "D-DIN", "Avenir Next", sans-serif';
+
+// ---------------------------------------------------------------------------
+// Logic: take in readings and work out what they mean.
+// ---------------------------------------------------------------------------
+const state = {
+  started: false,
+  distance: null,       // last good distance, in cm
+  zone: null,           // "green", "yellow" or "red"
+  lost: false,          // true while the sensor is blind
+  lastReadingAt: 0,     // performance.now() of the last reading
+  runTimeMs: 0,         // where we are in the recorded run
+  pendingSentAt: null,  // a reading waiting to be drawn, for the delay check
+  delayMs: null,        // how long the last reading took to reach the screen
+};
+
+// For checking the requirements from the browser console.
+const debug = { state: state, beeps: [], lostSounds: [], zoneChanges: [], delays: [] };
+window.parkingDebug = debug;
+function remember(list, item) {
+  list.push(item);
+  if (list.length > 400) list.shift();
+}
+
+function zoneFor(cm) {
+  if (cm < ZONES.redBelowCm) return "red";
+  if (cm < ZONES.yellowBelowCm) return "yellow";
+  return "green";
+}
+
+sensor.onReading(function (reading) {
+  state.lastReadingAt = performance.now();
+  state.runTimeMs = reading.time_ms;
+  state.pendingSentAt = reading.sentAt;
+
+  if (reading.missed) {
+    setLost(true);
+    return;
+  }
+
+  state.distance = reading.distance_cm;
+  const zone = zoneFor(reading.distance_cm);
+  const wasLost = state.lost;
+  const changed = state.zone !== null && zone !== state.zone;
+  if (zone !== state.zone) {
+    remember(debug.zoneChanges, { at: state.lastReadingAt, zone: zone, runTimeMs: reading.time_ms });
+  }
+  state.zone = zone;
+  setLost(false);
+
+  // Changing zone, or getting the sensor back, beeps straight away so the
+  // sound never lags behind the screen. The new rate starts from this beep.
+  if (changed || wasLost) beepNow();
+});
+
+// The recording has ended. Stop the sound and offer a replay, so the end of
+// the run isn't mistaken for the sensor going quiet.
+sensor.onEnd(function () {
+  state.started = false;
+  document.getElementById("startTitle").textContent = "RUN COMPLETE";
+  document.getElementById("startText").textContent = "The car stopped about 20 cm from the wall. Replay to watch the run again.";
+  document.getElementById("startButton").textContent = "REPLAY";
+  document.getElementById("startScreen").style.display = "flex";
+});
+
+function setLost(lost) {
+  if (lost === state.lost) return;
+  state.lost = lost;
+  if (lost) playLostSound();
+}
+
+// ---------------------------------------------------------------------------
+// Sound: beep at the zone's rate, or play the sensor-lost sound.
+// ---------------------------------------------------------------------------
+const beepSound = document.getElementById("beepSound");
+const lostSound = document.getElementById("lostSound");
+let lastBeepAt = -Infinity;
+let lastLostSoundAt = -Infinity;
+const pulses = [];   // radar pulses on screen, one per beep
+
+function play(audio) {
+  try {
+    audio.currentTime = 0;
+    const result = audio.play();
+    if (result && result.catch) result.catch(function () {});
+  } catch (err) { /* a missed beep shouldn't stop the screen */ }
+}
+
+function beepNow() {
+  lastBeepAt = performance.now();
+  play(beepSound);
+  pulses.push({ startedAt: lastBeepAt, zone: state.zone, lost: false });
+  remember(debug.beeps, { at: lastBeepAt, zone: state.zone });
+}
+
+function playLostSound() {
+  lastLostSoundAt = performance.now();
+  play(lostSound);
+  pulses.push({ startedAt: lastLostSoundAt, zone: null, lost: true });
+  remember(debug.lostSounds, { at: lastLostSoundAt });
+}
+
+// This checks every 10 ms, so a change of zone takes effect on the next check
+// and doesn't wait for the current slow beep to finish its cycle.
+setInterval(function () {
+  if (!state.started) return;
+  const now = performance.now();
+
+  if (now - state.lastReadingAt > STALE_AFTER_MS) setLost(true);
+
+  if (state.lost) {
+    if (now - lastLostSoundAt >= LOST_REPEAT_MS) playLostSound();
+    return;
+  }
+  if (state.zone && now - lastBeepAt >= 1000 / BEEPS_PER_SECOND[state.zone]) beepNow();
+}, 10);
+
+// ---------------------------------------------------------------------------
+// Display: the driver's screen. The car points up and the wall is behind it,
+// below. Everything behind the car is drawn to one scale from the rear sensor.
+// ---------------------------------------------------------------------------
+const device = document.getElementById("device");
+const canvas = document.getElementById("screen");
+const ctx = canvas.getContext("2d");
+let W = 0, H = 0, S = 1;
+
+function resize() {
+  W = device.clientWidth;
+  H = device.clientHeight;
+  // Sharp on a retina screen, but capped at about 2.5 million pixels, so a
+  // big window doesn't slow the drawing past the 100 ms limit.
+  const dpr = Math.min(window.devicePixelRatio || 1, Math.sqrt(2.5e6 / Math.max(1, W * H)));
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  S = Math.min(W / 450, H / 720);   // laid out for a tall screen
+}
+new ResizeObserver(resize).observe(device);
+resize();
+
+function rgba(c, a) { return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + a + ")"; }
+
+function roundRect(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function layout() {
+  const pad = 24 * S;
+  const headerH = 100 * S;
+  const footerH = 20 * S;
+  const carLen = Math.min(185 * S, (H - headerH - footerH) * 0.27);
+  const carTop = headerH + 10 * S;
+  const sensorY = carTop + carLen;
+  const rangePx = H - footerH - sensorY - 16 * S;
+  const pxPerCm = rangePx / MAX_RANGE_CM;
+  return {
+    pad: pad,
+    headerH: headerH,
+    cx: W / 2,
+    carLen: carLen,
+    carW: carLen / 2.1,
+    carTop: carTop,
+    sensorY: sensorY,
+    rangePx: rangePx,
+    pxPerCm: pxPerCm,
+    halfAngle: Math.min(0.6, Math.atan((W * 0.34) / rangePx)),   // the sensor's field of view
+    depthAt: function (cm) { return Math.min(cm, MAX_RANGE_CM) * pxPerCm; },
+  };
+}
+
+// An arc across the field of view, at a given distance from the sensor.
+function fieldArc(L, radius) {
+  ctx.beginPath();
+  ctx.arc(L.cx, L.sensorY, Math.max(1, radius), Math.PI / 2 - L.halfAngle, Math.PI / 2 + L.halfAngle);
+}
+
+function drawBackground(L) {
+  ctx.fillStyle = "#020406";
+  ctx.fillRect(0, 0, W, H);
+  const glow = ctx.createRadialGradient(L.cx, L.sensorY, 0, L.cx, L.sensorY, L.rangePx * 1.1);
+  glow.addColorStop(0, rgba(UI, 0.07));
+  glow.addColorStop(1, rgba(UI, 0));
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H);
+
+  // The sensor's field of view.
+  ctx.beginPath();
+  ctx.moveTo(L.cx, L.sensorY);
+  ctx.arc(L.cx, L.sensorY, L.rangePx, Math.PI / 2 - L.halfAngle, Math.PI / 2 + L.halfAngle);
+  ctx.closePath();
+  ctx.fillStyle = rgba(UI, 0.025);
+  ctx.fill();
+  ctx.strokeStyle = rgba(UI, 0.16);
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+// Trees along both sides, fixed to the ground. As the car reverses they
+// scroll past, so the screen feels like the car is moving. They're decoration
+// only, so they fade out toward the edges and stay dim.
+const TREE_CM = 70;         // average ground distance between trees on one side
+let groundD = null;         // a smoothed distance, so the trees glide between readings
+let lastFrameAt = null;
+
+function updateGround(now) {
+  const dt = lastFrameAt === null ? 0 : now - lastFrameAt;
+  lastFrameAt = now;
+  if (state.distance === null) { groundD = null; return; }
+  if (groundD === null) { groundD = state.distance; return; }
+  if (state.lost) return;   // the sensor is blind, so the ground stops moving
+  groundD += (state.distance - groundD) * (1 - Math.exp(-dt / 150));
+}
+
+function drawGround(L) {
+  if (groundD === null) return;
+  const top = L.headerH;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, top, W, H - top);
+  ctx.clip();
+
+  // How far out from the centre the sensor's field of view reaches at a given
+  // height. Above the sensor, there's nothing to keep clear of.
+  function fieldEdgeAt(y) {
+    const depth = y - L.sensorY;
+    return depth > 0 ? depth * Math.tan(L.halfAngle) : 0;
+  }
+  function fadeAt(y) {
+    const fromTop = Math.min(1, Math.max(0, (y - top) / (60 * S)));
+    const fromBottom = Math.min(1, Math.max(0, (H - y) / (40 * S)));
+    return fromTop * fromBottom;
+  }
+  // The same "random" number every time for the same tree, so each tree keeps
+  // its size and place from one frame to the next.
+  function random(k, side, n) {
+    const v = Math.sin(k * 12.9898 + side * 78.233 + n * 37.719) * 43758.5453;
+    return v - Math.floor(v);
+  }
+
+  // A tree seen from above: a slightly uneven canopy, an inner layer of
+  // leaves and a dot for the trunk.
+  function drawTree(x, y, r, alpha, phase) {
+    ctx.strokeStyle = rgba(UI, 0.3 * alpha);
+    ctx.lineWidth = 1.2 * S;
+    ctx.beginPath();
+    for (let i = 0; i <= 28; i++) {
+      const a = (i / 28) * Math.PI * 2;
+      const rr = r * (1 + 0.07 * Math.sin(5 * a + phase) + 0.04 * Math.sin(3 * a - phase));
+      const px = x + Math.cos(a) * rr;
+      const py = y + Math.sin(a) * rr;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fillStyle = rgba(UI, 0.025 * alpha);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = rgba(UI, 0.15 * alpha);
+    ctx.beginPath();
+    ctx.arc(x + r * 0.12, y - r * 0.1, r * 0.58, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = rgba(UI, 0.35 * alpha);
+    ctx.beginPath();
+    ctx.arc(x, y, 1.6 * S, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Only the trees that could be on screen. Ground positions are measured
+  // from the obstacle toward the car. The cliff starts at the obstacle, so
+  // there are no trees past it.
+  const fromCm = Math.max(0, groundD - (H - L.sensorY) / L.pxPerCm - TREE_CM);
+  const toCm = groundD + (L.sensorY - top) / L.pxPerCm + TREE_CM;
+  [-1, 1].forEach(function (side) {
+    for (let k = Math.floor(fromCm / TREE_CM); k <= Math.ceil(toCm / TREE_CM); k++) {
+      const groundCm = k * TREE_CM + (random(k, side, 1) - 0.5) * TREE_CM * 0.6;
+      const y = L.sensorY + (groundD - groundCm) * L.pxPerCm;
+      const r = (16 + random(k, side, 2) * 18) * S;
+      if (groundCm * L.pxPerCm < r + 6 * S) continue;   // too close to the cliff edge
+      // Each tree stays at the same distance from the centre line. Trees only
+      // ever move up the screen, the way the ground moves past a reversing car.
+      const nearest = L.carW / 2 + r + 14 * S;
+      const offset = nearest + random(k, side, 3) * Math.max(0, W / 2 - nearest);
+      const x = L.cx + side * offset;
+      // Fade out toward the edge of the screen and near the top and bottom.
+      const out = offset / (W / 2);
+      let alpha = fadeAt(y) * Math.max(0, Math.min(1, (1.05 - out) / 0.45));
+      // Fade out where a tree meets the sensor's field of view, so it never
+      // covers the radar. It's gone by the time its trunk reaches the edge.
+      const gap = (offset - r) - fieldEdgeAt(y);
+      alpha *= Math.max(0, Math.min(1, (gap + r) / (r + 10 * S)));
+      if (alpha > 0.01) drawTree(x, y, r, alpha, random(k, side, 4) * 6);
+    }
+  });
+  ctx.restore();
+}
+
+// Range rings every 50 cm are the distance markings.
+function drawRings(L) {
+  ctx.lineWidth = 1;
+  ctx.font = (11 * S) + "px " + SANS;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  for (let cm = 50; cm <= 250; cm += 50) {
+    const r = L.depthAt(cm);
+    ctx.strokeStyle = rgba(UI, 0.13);
+    fieldArc(L, r);
+    ctx.stroke();
+    ctx.fillStyle = rgba(UI, 0.5);
+    ctx.fillText((cm / 100).toFixed(1) + " M", L.cx + r * Math.sin(L.halfAngle) + 7 * S, L.sensorY + r * Math.cos(L.halfAngle));
+  }
+}
+
+// The half-width of the wall line at a given distance. It reaches a little
+// past the field of view, so it reads as a wall.
+function wallHalfWidth(L, cm) {
+  return Math.max(L.depthAt(cm) * Math.tan(L.halfAngle) + 26 * S, L.carW * 0.9);
+}
+
+// Where the yellow and red zones begin, labelled outside the wall's reach.
+function drawZoneArcs(L) {
+  ctx.save();
+  ctx.setLineDash([4 * S, 6 * S]);
+  ctx.lineWidth = 1.5;
+  ctx.font = (10.5 * S) + "px " + SANS;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  [["yellow", ZONES.yellowBelowCm, "SLOW"], ["red", ZONES.redBelowCm, "STOP"]].forEach(function (zoneLine) {
+    const colour = COLOURS[zoneLine[0]];
+    const r = L.depthAt(zoneLine[1]);
+    ctx.strokeStyle = rgba(colour, 0.5);
+    fieldArc(L, r);
+    ctx.stroke();
+    ctx.fillStyle = rgba(colour, 0.75);
+    ctx.fillText(zoneLine[2], L.cx - wallHalfWidth(L, zoneLine[1]) - 8 * S, L.sensorY + r * Math.cos(L.halfAngle));
+  });
+  ctx.restore();
+}
+
+// The space between the car and the wall, tinted with the zone colour.
+function drawGap(L) {
+  if (state.lost || state.distance === null) return;
+  const colour = COLOURS[state.zone];
+  const depth = L.depthAt(state.distance);
+  const half = depth * Math.tan(L.halfAngle);
+  const tint = ctx.createLinearGradient(0, L.sensorY, 0, L.sensorY + depth);
+  tint.addColorStop(0, rgba(colour, 0.02));
+  tint.addColorStop(1, rgba(colour, 0.22));
+  ctx.fillStyle = tint;
+  ctx.beginPath();
+  ctx.moveTo(L.cx, L.sensorY);
+  ctx.lineTo(L.cx + half, L.sensorY + depth);
+  ctx.lineTo(L.cx - half, L.sensorY + depth);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawWall(L) {
+  if (state.distance === null) return;
+  const y = L.sensorY + L.depthAt(state.distance);
+  const half = wallHalfWidth(L, state.distance);
+  ctx.font = (10.5 * S) + "px " + SANS;
+  ctx.textAlign = "center";
+
+  if (state.lost) {
+    // The sensor is blind, so this is only where the wall was last seen.
+    ctx.save();
+    ctx.setLineDash([6 * S, 6 * S]);
+    ctx.strokeStyle = rgba(COLOURS.lost, 0.7);
+    ctx.lineWidth = 2 * S;
+    ctx.beginPath();
+    ctx.moveTo(L.cx - half, y);
+    ctx.lineTo(L.cx + half, y);
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = rgba(COLOURS.lost, 0.9);
+    ctx.textAlign = "right";
+    ctx.textBaseline = "bottom";
+    ctx.fillText("LAST KNOWN POSITION", L.cx + half, y - 6 * S);
+    return;
+  }
+
+  const colour = COLOURS[state.zone];
+  ctx.save();
+  ctx.shadowColor = rgba(colour, 0.9);
+  ctx.shadowBlur = 14 * S;
+  ctx.strokeStyle = rgba(colour, 1);
+  ctx.lineWidth = 2.5 * S;
+  ctx.beginPath();
+  ctx.moveTo(L.cx - half, y);
+  ctx.lineTo(L.cx + half, y);
+  ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle = rgba(colour, 0.8);
+  ctx.textAlign = "right";
+  ctx.textBaseline = "bottom";
+  ctx.fillText("OBSTACLE", L.cx + half, y - 6 * S);
+}
+
+// A cliff behind the obstacle, part of the scenery like the trees. Its jagged
+// edge sits just past the obstacle line and moves with it. Nothing on the far
+// side shows through, including the radar, since sound doesn't pass rock.
+function rockRandom(i, n) {
+  const v = Math.sin(i * 127.1 + n * 311.7) * 43758.5453;
+  return v - Math.floor(v);
+}
+
+function drawCliff(L) {
+  if (state.distance === null) return;
+  // The cliff is scenery, so it glides with the same smoothed ground as the
+  // trees. It never sits closer to the car than the obstacle line, which
+  // steps with each new reading.
+  const smoothY = L.sensorY + L.depthAt(groundD === null ? state.distance : groundD);
+  const lineY = Math.max(smoothY, L.sensorY + L.depthAt(state.distance));
+  const step = 11 * S;
+  const first = Math.floor(-L.cx / step) - 1;
+  const last = Math.ceil((W - L.cx) / step) + 1;
+
+  // Each point on the edge is a little further from the car than the
+  // obstacle line, never closer, so the line stays the nearest thing.
+  const points = [];
+  for (let i = first; i <= last; i++) {
+    let drop = (4 + rockRandom(i, 1) * 9) * S;
+    if (rockRandom(i, 2) > 0.86) drop += 7 * S;   // the odd sharper notch
+    points.push({ i: i, x: L.cx + i * step, y: lineY + drop });
+  }
+
+  // Everything past the edge is solid ground.
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, H);
+  points.forEach(function (p) { ctx.lineTo(p.x, p.y); });
+  ctx.lineTo(points[points.length - 1].x, H);
+  ctx.closePath();
+  ctx.fillStyle = "#020406";
+  ctx.fill();
+
+  // Dim cyan, fading toward the sides of the screen, like the trees.
+  function fade(alpha) {
+    const g = ctx.createLinearGradient(0, 0, W, 0);
+    g.addColorStop(0, rgba(UI, 0));
+    g.addColorStop(0.22, rgba(UI, alpha));
+    g.addColorStop(0.78, rgba(UI, alpha));
+    g.addColorStop(1, rgba(UI, 0));
+    return g;
+  }
+
+  // The edge itself.
+  ctx.lineWidth = 1.3 * S;
+  ctx.strokeStyle = fade(0.45);
+  ctx.beginPath();
+  points.forEach(function (p, n) { if (n === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+  ctx.stroke();
+
+  // Short strokes hanging off the edge, the way maps mark a cliff.
+  ctx.lineWidth = 1 * S;
+  ctx.strokeStyle = fade(0.3);
+  ctx.beginPath();
+  points.forEach(function (p) {
+    const length = (5 + rockRandom(p.i, 3) * 10) * S;
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(p.x + (rockRandom(p.i, 4) - 0.5) * 3 * S, p.y + length);
+  });
+  ctx.stroke();
+
+  // Fainter contours further down, spreading out and roughening as they go,
+  // so the drop reads as depth and not as an empty black space.
+  [[16, 0.14], [30, 0.1], [48, 0.07], [72, 0.05], [102, 0.035], [140, 0.02]].forEach(function (contour, c) {
+    ctx.strokeStyle = fade(contour[1]);
+    ctx.beginPath();
+    points.forEach(function (p, n) {
+      const rough = (rockRandom(p.i, 5 + c) - 0.5) * (4 + c * 3) * S;
+      const y = p.y + contour[0] * S + (p.y - lineY) * (0.4 + c * 0.25) + rough;
+      if (n === 0) ctx.moveTo(p.x, y); else ctx.lineTo(p.x, y);
+    });
+    ctx.stroke();
+  });
+}
+
+// The car's outline: a rounder nose at the front (top) and a squarer tail at
+// the back, so the shape alone says which way it faces.
+function carBody(x, y, w, h) {
+  const nose = w * 0.44, tail = w * 0.2;
+  ctx.beginPath();
+  ctx.moveTo(x + nose, y);
+  ctx.lineTo(x + w - nose, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + nose);
+  ctx.lineTo(x + w, y + h - tail);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - tail, y + h);
+  ctx.lineTo(x + tail, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - tail);
+  ctx.lineTo(x, y + nose);
+  ctx.quadraticCurveTo(x, y, x + nose, y);
+  ctx.closePath();
+}
+
+// A pane of glass: a curved edge and a straight edge joined by its sides.
+function glass(x, y, w, curveY, curveTo, flatY, inset) {
+  ctx.beginPath();
+  ctx.moveTo(x + w * 0.16, curveY);
+  ctx.quadraticCurveTo(x + w / 2, curveTo, x + w * 0.84, curveY);
+  ctx.lineTo(x + w * (0.84 - inset), flatY);
+  ctx.lineTo(x + w * (0.16 + inset), flatY);
+  ctx.closePath();
+}
+
+function drawCar(L) {
+  const w = L.carW, h = L.carLen, x = L.cx - w / 2, y = L.carTop;
+  ctx.save();
+  ctx.shadowColor = rgba(UI, 0.6);
+  ctx.shadowBlur = 10 * S;
+  ctx.strokeStyle = rgba(UI, 0.9);
+  ctx.lineWidth = 1.6 * S;
+  carBody(x, y, w, h);
+  ctx.fillStyle = rgba(UI, 0.04);
+  ctx.fill();
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // A long bonnet in front and a short boot behind, with the cabin set back,
+  // the way most cars look from above.
+  ctx.lineWidth = 1.2 * S;
+  ctx.fillStyle = rgba(UI, 0.08);
+  ctx.strokeStyle = rgba(UI, 0.5);
+  glass(x, y, w, y + h * 0.33, y + h * 0.26, y + h * 0.43, 0.04);   // windscreen
+  ctx.fill();
+  ctx.stroke();
+  glass(x, y, w, y + h * 0.83, y + h * 0.88, y + h * 0.76, 0.03);   // rear window
+  ctx.fill();
+  ctx.stroke();
+  ctx.strokeStyle = rgba(UI, 0.22);
+  roundRect(x + w * 0.2, y + h * 0.45, w * 0.6, h * 0.29, w * 0.1);  // roof
+  ctx.stroke();
+  ctx.strokeStyle = rgba(UI, 0.45);
+  ctx.beginPath();                                                   // mirrors
+  ctx.moveTo(x, y + h * 0.37);
+  ctx.lineTo(x - w * 0.12, y + h * 0.40);
+  ctx.moveTo(x + w, y + h * 0.37);
+  ctx.lineTo(x + w * 1.12, y + h * 0.40);
+  ctx.stroke();
+
+  // Headlights at the front and red tail lights at the back.
+  ctx.lineCap = "round";
+  ctx.lineWidth = 2.4 * S;
+  ctx.shadowBlur = 8 * S;
+  ctx.shadowColor = "rgba(255, 244, 214, 0.9)";
+  ctx.strokeStyle = "rgba(255, 244, 214, 0.95)";
+  ctx.beginPath();
+  ctx.moveTo(x + w * 0.12, y + h * 0.07);
+  ctx.lineTo(x + w * 0.30, y + h * 0.03);
+  ctx.moveTo(x + w * 0.88, y + h * 0.07);
+  ctx.lineTo(x + w * 0.70, y + h * 0.03);
+  ctx.stroke();
+  ctx.shadowColor = rgba(COLOURS.red, 0.9);
+  ctx.strokeStyle = rgba(COLOURS.red, 0.95);
+  ctx.beginPath();
+  ctx.moveTo(x + w * 0.08, y + h * 0.955);
+  ctx.lineTo(x + w * 0.30, y + h * 0.975);
+  ctx.moveTo(x + w * 0.92, y + h * 0.955);
+  ctx.lineTo(x + w * 0.70, y + h * 0.975);
+  ctx.stroke();
+  ctx.restore();
+
+  // The rear sensor, where the radar pulses come from.
+  ctx.save();
+  ctx.shadowColor = rgba(UI, 1);
+  ctx.shadowBlur = 10 * S;
+  ctx.fillStyle = rgba(UI, 1);
+  ctx.beginPath();
+  ctx.arc(L.cx, L.sensorY, 3.5 * S, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// Each pulse travels from the sensor to the wall, then its echo comes back.
+// A pulse sent while the sensor is lost goes out and never comes back.
+function drawPulses(L, now) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(L.cx, L.sensorY);
+  ctx.arc(L.cx, L.sensorY, L.rangePx, Math.PI / 2 - L.halfAngle, Math.PI / 2 + L.halfAngle);
+  ctx.closePath();
+  ctx.clip();
+  const lostPulseMs = PULSE_MS * 5;
+  for (let i = pulses.length - 1; i >= 0; i--) {
+    const p = pulses[i];
+    const age = now - p.startedAt;
+    if (age > (p.lost ? lostPulseMs : PULSE_MS * 2)) { pulses.splice(i, 1); continue; }
+
+    let radius, alpha, colour;
+    ctx.lineWidth = 2 * S;
+    if (p.lost) {
+      // Brighter, slower and wider, so a pulse with no echo is easy to see.
+      radius = L.rangePx * age / lostPulseMs;
+      alpha = 1 - age / lostPulseMs;
+      colour = COLOURS.lost;
+      ctx.lineWidth = 3 * S;
+    } else {
+      if (state.distance === null) continue;
+      const depth = L.depthAt(state.distance);
+      colour = COLOURS[p.zone];
+      if (age < PULSE_MS) {
+        radius = depth * age / PULSE_MS;
+        alpha = 0.85;
+      } else if (age < PULSE_MS * 2) {
+        radius = depth * (1 - (age - PULSE_MS) / PULSE_MS);   // the echo coming back
+        alpha = 0.3;
+      } else {
+        continue;
+      }
+    }
+    ctx.strokeStyle = rgba(colour, alpha);
+    fieldArc(L, radius);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawHeader(L) {
+  const pad = L.pad;
+  let label, colour, note;
+  if (state.lost) {
+    label = "SENSOR LOST";
+    colour = COLOURS.lost;
+    note = "CHECK BEHIND YOU";
+  } else if (state.zone === null) {
+    label = "WAITING";
+    colour = COLOURS.waiting;
+  } else {
+    label = ZONE_LABEL[state.zone];
+    colour = COLOURS[state.zone];
+  }
+
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillStyle = rgba(colour, 1);
+  ctx.font = "600 " + (28 * S) + "px " + DIN;
+  ctx.fillText(label, pad, pad + 6 * S);
+  if (note) {
+    ctx.fillStyle = rgba(colour, 0.8);
+    ctx.font = (11 * S) + "px " + SANS;
+    ctx.fillText(note, pad, pad + 42 * S);
+  }
+
+  // The distance as a number, for anyone who wants it.
+  const base = pad + 44 * S;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "alphabetic";
+  const known = !state.lost && state.distance !== null;
+  ctx.font = (12 * S) + "px " + SANS;
+  const unitWidth = known ? ctx.measureText("CM").width + 6 * S : 0;
+  if (known) {
+    ctx.fillStyle = rgba(UI, 0.5);
+    ctx.fillText("CM", W - pad, base);
+  }
+  ctx.fillStyle = state.lost ? rgba(COLOURS.lost, 1) : "#eefaff";
+  ctx.font = "300 " + (56 * S) + "px " + DIN;
+  ctx.fillText(known ? String(Math.round(state.distance)) : "--", W - pad - unitWidth, base);
+
+  ctx.fillStyle = rgba(UI, 0.08);
+  ctx.fillRect(pad, L.headerH - 8 * S, W - pad * 2, 1);
+}
+
+function draw(now) {
+  const L = layout();
+  updateGround(now);
+  drawBackground(L);
+  drawGround(L);
+  drawGap(L);
+  drawRings(L);
+  drawZoneArcs(L);
+  drawPulses(L, now);
+  drawCliff(L);
+  drawWall(L);
+  drawCar(L);
+  if (state.started) drawHeader(L);
+}
+
+function frame() {
+  const now = performance.now();
+  // The delay is from the moment sensor.js sent the reading to the moment
+  // the screen draws it.
+  if (state.pendingSentAt !== null) {
+    state.delayMs = now - state.pendingSentAt;
+    remember(debug.delays, state.delayMs);
+    state.pendingSentAt = null;
+    showLatency(state.delayMs);
+  }
+  draw(now);
+  device.classList.toggle("alert", state.started && !state.lost && state.zone === "red");
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ---------------------------------------------------------------------------
+// Sensor feed panel, for the demo only: the raw readings as they arrive.
+// ---------------------------------------------------------------------------
+const feedRows = document.getElementById("feedRows");
+const feedStats = document.getElementById("feedStats");
+const feedLatency = document.getElementById("feedLatency");
+let received = 0;
+let missedCount = 0;
+
+// The delay from sensor.js sending a reading to the driver's screen drawing
+// it. Red if it goes over the "virtually instant" limit.
+function showLatency(ms) {
+  feedLatency.textContent = "LATENCY " + Math.round(ms) + " MS";
+  feedLatency.classList.toggle("slow", ms > MAX_DELAY_MS);
+}
+
+function formatTime(ms) {
+  const s = Math.floor(ms / 1000);
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+
+sensor.onReading(function (reading) {
+  received++;
+  if (reading.missed) missedCount++;
+  const cells = [
+    reading.time_ms,
+    Number.isNaN(reading.distance_cm) ? "NaN" : reading.distance_cm.toFixed(2),
+    Number.isNaN(reading.echo_us) ? "NaN" : reading.echo_us,
+    reading.warning_level,
+    reading.servo_angle,
+  ];
+  const row = document.createElement("div");
+  row.className = "feed-row newest" + (reading.missed ? " missed" : "");
+  cells.forEach(function (value) {
+    const cell = document.createElement("span");
+    cell.textContent = value;
+    row.appendChild(cell);
+  });
+  if (feedRows.firstElementChild) feedRows.firstElementChild.classList.remove("newest");
+  feedRows.prepend(row);
+  while (feedRows.children.length > 60) feedRows.lastElementChild.remove();
+  feedStats.textContent = "RECEIVED " + received + "    MISSED " + missedCount +
+    "    RUN " + formatTime(reading.time_ms) + " / " + formatTime(sensor.durationMs);
+});
+
+// ---------------------------------------------------------------------------
+// Start: one click turns on the sound and starts the sensor stream.
+// ---------------------------------------------------------------------------
+document.getElementById("startButton").addEventListener("click", function () {
+  // Playing each sound once, muted, inside the click lets the browser play
+  // them later without another click. The stream starts once that's done,
+  // so the first real beep isn't swallowed by the muted one.
+  const unlocks = [beepSound, lostSound].map(function (audio) {
+    audio.muted = true;
+    let result;
+    try { result = audio.play(); } catch (err) { /* handled below */ }
+    return Promise.resolve(result).catch(function () {}).then(function () {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+    });
+  });
+  const giveUp = new Promise(function (resolve) { setTimeout(resolve, 500); });
+
+  // A replay starts from a clean screen and an empty feed.
+  state.distance = null;
+  state.zone = null;
+  state.lost = false;
+  state.delayMs = null;
+  pulses.length = 0;
+  feedRows.textContent = "";
+  received = 0;
+  missedCount = 0;
+  feedLatency.textContent = "LATENCY -- MS";
+  feedLatency.classList.remove("slow");
+
+  document.getElementById("startScreen").style.display = "none";
+  Promise.race([Promise.all(unlocks), giveUp]).then(function () {
+    state.started = true;
+    state.lastReadingAt = performance.now();
+    sensor.start();
+  });
+});
+</script>
+</body>
+</html>
