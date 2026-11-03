@@ -305,7 +305,62 @@ let lastBeepAt = -Infinity;
 let lastLostSoundAt = -Infinity;
 const pulses = [];   // radar pulses on screen, one per beep
 
+// The sounds play through the Web Audio API. Rewinding and replaying an
+// <audio> element several times a second isn't reliable: browsers, Safari and
+// phones especially, quietly skip a replay now and then, so the beeping used
+// to drop out. Web Audio plays a fresh copy of the decoded sound every time.
+// Opened straight from a file (file://), the browser won't let fetch() read
+// the sound files, so the screen falls back to the <audio> elements.
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
+const decoded = new Map();   // <audio> element -> its decoded sound
+const soundFiles = new Map([beepSound, lostSound].map(function (audio) {
+  const data = fetch(audio.src)
+    .then(function (response) {
+      if (!response.ok) throw new Error(response.status);
+      return response.arrayBuffer();
+    })
+    .catch(function () { return null; });
+  return [audio, data];
+}));
+
+// Called inside the Start click, because browsers only start sound after a click.
+function startWebAudio() {
+  if (!AudioCtx) return Promise.resolve();
+  if (!audioCtx) audioCtx = new AudioCtx();
+  if (audioCtx.state !== "running") audioCtx.resume().catch(function () {});
+  // iPhones also want a sound played inside the click, so play a silent one.
+  const silence = audioCtx.createBufferSource();
+  silence.buffer = audioCtx.createBuffer(1, 1, 22050);
+  silence.connect(audioCtx.destination);
+  silence.start(0);
+
+  return Promise.all(Array.from(soundFiles, function (entry) {
+    const audio = entry[0];
+    if (decoded.has(audio)) return null;
+    return entry[1].then(function (data) {
+      if (!data) return;
+      // decodeAudioData empties the data it's given, so keep a copy for replays.
+      return new Promise(function (resolve, reject) {
+        audioCtx.decodeAudioData(data.slice(0), resolve, reject);
+      }).then(function (buffer) { decoded.set(audio, buffer); });
+    }).catch(function () { /* this sound uses its <audio> element instead */ });
+  }));
+}
+
 function play(audio) {
+  const buffer = decoded.get(audio);
+  if (buffer) {
+    try {
+      // A phone can pause the sound system, for a call say. Wake it back up.
+      if (audioCtx.state !== "running") audioCtx.resume().catch(function () {});
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioCtx.destination);
+      source.start(0);
+    } catch (err) { /* a missed beep shouldn't stop the screen */ }
+    return;
+  }
   try {
     audio.currentTime = 0;
     const result = audio.play();
@@ -972,8 +1027,8 @@ sensor.onReading(function (reading) {
 // Start: one click turns on the sound and starts the sensor stream.
 // ---------------------------------------------------------------------------
 document.getElementById("startButton").addEventListener("click", function () {
-  // Playing each sound once, muted, inside the click lets the browser play
-  // them later without another click. The stream starts once that's done,
+  // Starting Web Audio, and playing each <audio> element once, muted, inside
+  // the click lets the browser play sound later without another click. The stream starts once that's done,
   // so the first real beep isn't swallowed by the muted one.
   const unlocks = [beepSound, lostSound].map(function (audio) {
     audio.muted = true;
@@ -985,6 +1040,7 @@ document.getElementById("startButton").addEventListener("click", function () {
       audio.muted = false;
     });
   });
+  unlocks.push(startWebAudio());
   const giveUp = new Promise(function (resolve) { setTimeout(resolve, 500); });
 
   // A replay starts from a clean screen and an empty feed.
