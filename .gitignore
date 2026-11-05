@@ -8,3 +8,6 @@
 !sounds/
 !sounds/*.wav
 !README.md
+!docs/
+!docs/screenshots/
+!docs/screenshots/*.png

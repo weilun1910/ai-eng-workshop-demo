@@ -6,6 +6,8 @@ This is a demo we built for an AI workshop in ENAS 1180, Larry Wilen's first-yea
 
 It's a parking screen for the back of a car. A recorded reversing run plays through a simulated rear sensor, and the screen shows how close the car is to the obstacle behind it, with beeps that speed up as it gets closer. It's a teaching demo, so it isn't meant as a finished product.
 
+![The driver's screen on the left and the raw sensor feed on the right](docs/screenshots/overview.png)
+
 ## Why we built it
 
 The workshop was about using AI as a companion through the whole engineering process. The catch is that AI gives you back roughly what you put in. A vague ask gets you a vague build, and a clear plan gets you something close to what you actually wanted.
@@ -22,14 +24,27 @@ The sensor is on the rear because the driver can already see what's in front of 
 
 ## What it does
 
-- Shows the car from above, with the obstacle behind it drawn to scale and range rings every 50 cm.
-- Colours the gap by zone. Green is 100 cm and up, yellow is 30 to 100 cm, and red is under 30 cm.
-- Beeps once a second in green, twice a second in yellow and four times a second in red. Each beep also sends out a radar pulse, so the picture and the sound always agree.
-- About 20 seconds in, the sensor goes blind for a moment. The screen says SENSOR LOST and plays a different sound, because a sensor that stops beeping would sound safe when it isn't.
-- Keeps up in real time. The screen and the beep rate react within 100 ms of each reading.
-- Shows the raw readings in a sensor feed panel on the right, so you can watch the data turn into the screen. On a phone you just get the driver's screen.
+The car is drawn from above, with the obstacle behind it to scale and range rings every 50 cm. The gap is coloured by zone, and the beeping speeds up as the car gets closer. Each beep also sends out a radar pulse, so the picture and the sound always agree.
+
+| Clear, 100 cm and up | Slow down, 30 to 100 cm | Stop, under 30 cm |
+|---|---|---|
+| ![Green zone at 187 cm](docs/screenshots/zone-green.png) | ![Yellow zone at 68 cm](docs/screenshots/zone-yellow.png) | ![Red zone at 24 cm](docs/screenshots/zone-red.png) |
+| 1 beep a second | 2 beeps a second | 4 beeps a second, and the border glows red |
+
+About 20 seconds in, the sensor goes blind for a moment and the feed starts sending `NaN`. The screen switches to SENSOR LOST, marks where the obstacle was last seen and plays a different sound. If the beeping just stopped, the silence would sound safe.
+
+![The sensor lost state, with NaN readings in the feed](docs/screenshots/sensor-lost.png)
+
+The screen keeps up in real time. It reacts within 100 ms of each reading, and the feed panel shows the latency so you can check.
+
+<img src="docs/screenshots/phone.png" alt="The driver's screen on a phone" width="260" align="right">
+
+On a phone you get just the driver's screen at full width, so Larry and the students could open it on their own devices.
 
 Press Start to turn on the sound, since browsers block audio until you click something. The run lasts about 40 seconds and then offers a replay.
+
+<br clear="right">
+
 
 ## How it's put together
 
