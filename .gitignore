@@ -8,6 +8,8 @@
 !sounds/
 !sounds/*.wav
 !README.md
+# The student starter folder, downloadable from the live site
+!parking-screen-starter.zip
 !docs/
 !docs/screenshots/
 !docs/screenshots/*.png
